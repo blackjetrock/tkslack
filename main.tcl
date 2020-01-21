@@ -80,16 +80,16 @@ proc handler { sock type data } {
 
   switch -- $type {
     "connect" { puts "Connected on $sock" }
-    "text" {
-      # puts $data
-      set json [json::json2dict $data]
-      dict with json {
-        if {$type == "message" && $channel == $current_id} {
-          add_message $ts $user $text end
-          .lfrm.log see end
-        }
+      "text" {
+	  # puts $data
+	  set json [json::json2dict $data]
+	  dict with json {
+	      if {$type == "message" && $channel == $current_id} {
+		  add_message $ts $user $text end
+		  .lfrm.log see end
+	      }
+	  }
       }
-    }
   }
 }
 
@@ -196,13 +196,23 @@ proc get_messages { channel } {
 
   return [dict get $data messages]
 }
+proc automsg {msg} {
+    global current_id
+    
+     post_message $current_id "flying..."
+}
 
 proc add_message {ts user_id msg pos} {
   global members_by_hash
-
+    global current_id
+    
   set user $members_by_hash($user_id)
   set date [clock format [expr int($ts)] -format %T]
-  .lfrm.log insert $pos "\[$date\] <$user> $msg\n"
+    .lfrm.log insert $pos "\[$date\] <$user> $msg\n"
+
+    if { [string first pig $msg] != -1 } {
+	after 1000 "automsg flying..."
+    }
 }
 
 proc draw_messages { channel } {
@@ -229,7 +239,8 @@ proc pull_messages { channel } {
 }
 
 proc get_channels {} {
-  set data [request "https://slack.com/api/conversations.list?types=im,public_channel&exclude_archived=true"]
+    set data [request "https://slack.com/api/conversations.list?types=im,public_channel&exclude_archived=true"]
+    puts $data
   return [dict get $data channels]
 }
 
@@ -257,7 +268,8 @@ proc pull_channels {} {
   }
 
   # set channel name - id
-  foreach channel $channels {
+    foreach channel $channels {
+	puts "Channel:$channel"
     dict with channel {
       if {$is_im} {
         set channels_by_name("$members_by_hash($user)") $id
