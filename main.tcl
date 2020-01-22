@@ -6,6 +6,9 @@ package require http
 package require tls
 package require json
 
+# Create interpreter for channel code
+interp create -safe safeint
+
 # app
 wm title . "Slack"
 wm geometry . 1000x700
@@ -85,7 +88,7 @@ proc handler { sock type data } {
 	  set json [json::json2dict $data]
 	  dict with json {
 	      if {$type == "message" && $channel == $current_id} {
-		  add_message $ts $user $text end
+		  add_message_check $ts $user $text end
 		  .lfrm.log see end
 	      }
 	  }
@@ -199,7 +202,7 @@ proc get_messages { channel } {
 proc automsg {msg} {
     global current_id
     
-     post_message $current_id "flying..."
+     post_message $current_id $msg
 }
 
 proc add_message {ts user_id msg pos} {
@@ -209,9 +212,52 @@ proc add_message {ts user_id msg pos} {
   set user $members_by_hash($user_id)
   set date [clock format [expr int($ts)] -format %T]
     .lfrm.log insert $pos "\[$date\] <$user> $msg\n"
+}
 
-    if { [string first pig $msg] != -1 } {
-	after 1000 "automsg flying..."
+set ::RESPONSES {
+    {critchle " pies " "...and gravy..."}
+    {dfount   " Z80 " "(processor of the gods)"}
+    {amenadue "hello me" "Hello you"}
+
+}
+
+proc add_message_check {ts user_id msg pos} {
+  global members_by_hash
+    global current_id
+    puts "add message check"
+  set user $members_by_hash($user_id)
+  set date [clock format [expr int($ts)] -format %T]
+    .lfrm.log insert $pos "\[$date\] <$user> $msg\n"
+
+    if { [regexp -- "evaluate:(.*)" [string tolower $msg] all expr] } {
+        set answer "I'm sorry, $user, I can't work that out."
+        catch {
+            set answer [interp eval safeint expr $expr]
+        }
+        after 1000 "automsg \"$answer\""
+    }
+
+    if { [regexp -- "your review comments" [string tolower $msg]] } {
+        set fn "/organic_ses/review_comments/$user\.comments"
+        set txt "No comment"
+        catch {
+        set f [open $fn]
+        set txt [read $f]
+        close $f
+        }
+        after 1000 "automsg \"$txt\""
+    }
+    
+    foreach response $::RESPONSES {
+        set resp_user    [lindex $response 0]
+        set resp_pattern [lindex $response 1]
+        set resp_resp    [lindex $response 2]
+        puts "$resp_user $resp_pattern $resp_resp"
+        if { [string compare $user $resp_user] == 0 } {
+            if { [regexp -- $resp_pattern $msg] } {
+                after 1000 "automsg \"$resp_resp\""
+            }
+        }
     }
 }
 
@@ -238,15 +284,62 @@ proc pull_messages { channel } {
   draw_messages $channel
 }
 
-proc get_channels {} {
+proc old_get_channels {} {
     set data [request "https://slack.com/api/conversations.list?types=im,public_channel&exclude_archived=true"]
     puts $data
   return [dict get $data channels]
 }
 
+proc get_channels {} {
+
+    set cursor "-"
+    set done 0
+    set pagei 0
+
+    while { !$done } {
+        if { $cursor == "-" } {
+            set data [request "https://slack.com/api/conversations.list?types=mpim,im,private_channel,public_channel&exclude_archived=false&limit=1000"]
+        } else {
+            set data [request "https://slack.com/api/conversations.list?types=mpim,im,private_channel,public_channel&exclude_archived=false&limit=1000&cursor=$cursor"]
+        }
+        
+        set f [open data w]
+        puts $f $data
+        close $f
+
+        set ch [dict get $data channels]
+        foreach c $ch {
+            lappend channels $c
+        }
+        
+        set metadata [dict get $data response_metadata]
+        set next_cursor [dict get $metadata next_cursor]
+        set cursor $next_cursor
+
+        if { $cursor == "" } {
+            set done 1
+        }
+
+        incr pagei
+        puts "Fetching page $pagei"
+    }
+
+    set f [open channeldata w]
+    puts $f $channels
+    close $f
+    return $channels
+}
+
 proc get_members {} {
   set data [request "https://slack.com/api/users.list?"]
   return [dict get $data members]
+}
+
+proc lmap {_var list body} {
+    upvar 1 $_var var
+    set res {}
+    foreach var $list {lappend res [uplevel 1 $body]}
+    set res
 }
 
 proc draw_channels {} {
@@ -270,16 +363,17 @@ proc pull_channels {} {
   # set channel name - id
     foreach channel $channels {
 	puts "Channel:$channel"
-    dict with channel {
-      if {$is_im} {
-        set channels_by_name("$members_by_hash($user)") $id
-      } else {
-        set channels_by_name("#${name}") $id
-      }
+        catch {
+            dict with channel {
+                if {$is_im} {
+                    set channels_by_name("$members_by_hash($user)") $id
+                } else {
+                    set channels_by_name("#${name}") $id
+                }
+            }
+        }
     }
-  }
-
-  draw_channels
+    draw_channels
 }
 
 proc set_channel { name } {
